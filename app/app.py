@@ -320,6 +320,17 @@ def parse_date_or_range(text: str) -> Tuple[Optional[date], Optional[date]]:
 
     return (None, None)
 
+
+def _same_calendar_month(a: date, b: date) -> bool:
+    return (a.year == b.year) and (a.month == b.month)
+
+def _is_same_contract_month(target_day: date, cm: date) -> bool:
+    if isinstance(cm, datetime):
+        cm = cm.date()
+    return cm.year == target_day.year and cm.month == target_day.month
+
+
+
 def is_month_intent(text: str, start: Optional[date], end: Optional[date]) -> bool:
     if not start or not end:
         return False
@@ -332,6 +343,7 @@ def is_month_intent(text: str, start: Optional[date], end: Optional[date]) -> bo
 
 # Ranges for hours/slots (unchanged from your current app)
 def _fmt_hhmm(total_min: int) -> str:
+    # show 24:00 for exact end-of-day instead of wrapping to 00:00
     if total_min == 24 * 60:
         return "24:00"
     h = (total_min // 60) % 24
@@ -343,6 +355,9 @@ def hour_block_window(b: int) -> str:
 
 def slot_window(s: int) -> str:
     return f"{_fmt_hhmm((s-1)*15)}–{_fmt_hhmm(s*15)}"
+
+def _same_calendar_month(a: date, b: date) -> bool:
+    return (a.year == b.year) and (a.month == b.month)
 
 
 def _compress_ranges(indices: List[int]) -> List[Tuple[int, int]]:
@@ -372,6 +387,15 @@ class QuerySpec:
     area: str = "ALL"
 
 
+def _hour_blocks_to_slot_ranges(hranges: List[Tuple[int, int]]) -> List[Tuple[int, int]]:
+    """Convert hour block ranges (1–24) to slot ranges (1–96)."""
+    out: List[Tuple[int,int]] = []
+    for b1, b2 in hranges:
+        s1 = (b1 - 1) * 4 + 1
+        s2 = b2 * 4
+        out.append((s1, s2))
+    return out
+
 def parse_ranges(text: str) -> dict:
     s_orig = normalize(text)
     s = s_orig.lower()
@@ -384,14 +408,13 @@ def parse_ranges(text: str) -> dict:
 
     any_minute_nonzero = False
 
+    # “whole day”
     if re.search(r"\b(full day|all 24|entire day|whole day)\b", s):
         hours = list(range(1, 25))
 
+    # HH[:MM][am/pm] to HH[:MM][am/pm]
     time_pat = re.compile(
-        r"\b(?:from\s*)?"
-        r"(\d{1,2})(?::(\d{2}))?\s*(am|pm)?\s*"
-        r"(?:to|till|until|-)\s*"
-        r"(\d{1,2})(?::(\d{2}))?\s*(am|pm)?\b",
+        r"\b(\d{1,2})(?::(\d{2}))?\s*(am|pm)?\s*(?:to|-)\s*(\d{1,2})(?::(\d{2}))?\s*(am|pm)?\b",
         re.I,
     )
     found_time_range = False
@@ -407,42 +430,38 @@ def parse_ranges(text: str) -> dict:
         found_time_range = True
         h1, m1, a1 = int(m.group(1)), int(m.group(2) or 0), m.group(3)
         h2, m2, a2 = int(m.group(4)), int(m.group(5) or 0), m.group(6)
-
-        h2_raw = int(m.group(4))  # keep the original right bound as typed (can be 24)
+        h2_raw = int(m.group(4))  # keep raw for “... to 24”
 
         if m1 > 0 or m2 > 0:
             any_minute_nonzero = True
 
         H1, H2 = _to24_inner(h1, a1), _to24_inner(h2, a2)
 
+        # Hour blocks (1..24), inclusive
         start_block = min(24, H1 + 1 + (1 if m1 > 0 else 0))
-
-        # normal end-block computation
-        end_block = min(24, H2 + (0 if m2 == 0 else 1))
+        end_block   = min(24, H2 + (0 if m2 == 0 else 1))
         if m2 == 0:
             end_block = max(1, H2)
-
-        # ⭐ special case: "… to 24" with no minutes/ampm means include the 23–24 block
-        end_is_24 = (h2_raw == 24) and (a2 is None) and (m2 == 0)
-        if end_is_24:
+        # special case: “to 24” with no minutes or am/pm → include 23–24
+        if (h2_raw == 24) and (a2 is None) and (m2 == 0):
             end_block = 24
-
         if end_block >= start_block:
             hours.extend(range(start_block, end_block + 1))
 
-        def ceil_slot(h: int, mm: int) -> int:
-            return (h * 60 + mm + 14) // 15 + 1
-
-        def end_slot(h: int, mm: int) -> int:
-            return (h * 60 + mm) // 15
-
+        # Quarter slots (1..96)
+        def ceil_slot(h: int, mm: int) -> int: return (h*60 + mm + 14)//15 + 1
+        def end_slot(h: int, mm: int)  -> int: return (h*60 + mm)//15
         sslot = max(1, min(96, ceil_slot(H1, m1)))
         eslot = max(1, min(96, end_slot(H2, m2)))
+        if (h2_raw == 24) and (a2 is None) and (m2 == 0):
+            eslot = 96
         if eslot >= sslot:
             quarters.extend(range(sslot, eslot + 1))
 
+    # scrub numeric dates so “10-12” inside dates don’t become time ranges
     clean = re.sub(r"\b\d{1,2}[/-]\d{1,2}[/-]\d{2,4}\b", " ", s)
 
+    # “H to H hrs/hours”  (24 is allowed on the right)
     for m in re.finditer(r"\b(\d{1,2})\s*(?:to|-)\s*(\d{1,2})\s*(?:hours?|hrs?)\b", clean, re.I):
         h1 = max(0, min(23, int(m.group(1))))
         h2 = max(0, min(24, int(m.group(2))))
@@ -451,6 +470,7 @@ def parse_ranges(text: str) -> dict:
         if end_block >= start_block:
             hours.extend(range(start_block, end_block + 1))
 
+    # “blocks/slots A-B”
     for m in re.finditer(r"\b(\d{1,2})\s*(?:to|-)\s*(\d{1,2})\s*(?:blocks?|slots?|quarters?)\b", clean, re.I):
         a, b = int(m.group(1)), int(m.group(2))
         lo, hi = sorted((a, b))
@@ -458,6 +478,7 @@ def parse_ranges(text: str) -> dict:
         quarters.extend(range(lo, hi + 1))
         prefer_quarter = True
 
+    # Fallback: naked “a-b” when we didn’t already capture any clock-range
     if not found_time_range:
         for m in re.finditer(r"\b(\d{1,2})\s*(?:to|-)\s*(\d{1,2})\b", clean, re.I):
             a, b = int(m.group(1)), int(m.group(2))
@@ -472,6 +493,7 @@ def parse_ranges(text: str) -> dict:
     hours    = sorted({h for h in hours    if 1 <= h <= 24})
     quarters = sorted({q for q in quarters if 1 <= q <= 96})
 
+    # Decide mode
     if prefer_quarter or any_minute_nonzero:
         gran = "quarter"
     elif prefer_hour:
@@ -480,6 +502,90 @@ def parse_ranges(text: str) -> dict:
         gran = "hour" if hours else "quarter"
 
     return {"hours": hours, "quarters": quarters, "granularity": gran}
+
+def extract_explicit_time_groups(text: str) -> Dict[str, List[Tuple[int,int]]]:
+    """
+    Return explicit time groups (do not merge overlaps) and de-duplicate them.
+    Prevents duplicates when the same span matches both the generic time regex
+    and the '... hrs' regex.
+    """
+    s = normalize(text).lower()
+    hours_groups_raw, slot_groups_raw = [], []
+
+    time_pat = re.compile(
+        r"\b(\d{1,2})(?::(\d{2}))?\s*(am|pm)?\s*(?:to|-)\s*(\d{1,2})(?::(\d{2}))?\s*(am|pm)?\b",
+        re.I,
+    )
+
+    def _to24(h, ampm):
+        h = int(h)
+        if ampm:
+            h = h % 12
+            if ampm.lower() == "pm":
+                h += 12
+        return max(0, min(23, h))
+
+    # A) HH[:MM][am/pm] to HH[:MM][am/pm]
+    for m in time_pat.finditer(s):
+        h1, m1, a1 = int(m.group(1)), int(m.group(2) or 0), m.group(3)
+        h2, m2, a2 = int(m.group(4)), int(m.group(5) or 0), m.group(6)
+        H1, H2 = _to24(h1, a1), _to24(h2, a2)
+
+        # hour blocks 1..24, inclusive
+        sb = min(24, H1 + 1 + (1 if m1 > 0 else 0))
+        eb = min(24, H2 + (0 if m2 == 0 else 1))
+        if m2 == 0:
+            eb = max(1, H2)
+        # special “to 24”
+        if (m.group(4).isdigit() and int(m.group(4)) == 24 and a2 is None and m2 == 0):
+            eb = 24
+        if eb >= sb:
+            hours_groups_raw.append((sb, eb))
+
+        # 15-min slots 1..96
+        def ceil_slot(h, mm): return (h*60 + mm + 14)//15 + 1
+        def end_slot(h, mm):  return (h*60 + mm)//15
+        sslot = max(1, min(96, ceil_slot(H1, m1)))
+        eslot = max(1, min(96, end_slot(H2, m2)))
+        if (m.group(4).isdigit() and int(m.group(4)) == 24 and a2 is None and m2 == 0):
+            eslot = 96
+        if eslot >= sslot:
+            slot_groups_raw.append((sslot, eslot))
+
+    # B) “H to H hrs/hours”  (24 allowed on right)
+    for m in re.finditer(r"\b(\d{1,2})\s*(?:to|-)\s*(\d{1,2})\s*(?:hours?|hrs?)\b", s, re.I):
+        h1 = max(0, min(23, int(m.group(1))))
+        h2 = max(0, min(24, int(m.group(2))))
+        sb = min(24, h1 + 1)
+        eb = 24 if h2 == 24 else max(1, min(24, h2))
+        if eb >= sb:
+            hours_groups_raw.append((sb, eb))
+
+    # C) “blocks/slots A-B”
+    for m in re.finditer(r"\b(\d{1,2})\s*(?:to|-)\s*(\d{1,2})\s*(?:blocks?|slots?|quarters?)\b", s, re.I):
+        a, b = int(m.group(1)), int(m.group(2))
+        lo, hi = sorted((a, b))
+        lo = max(1, lo); hi = min(96, hi)
+        slot_groups_raw.append((lo, hi))
+
+    # Deduplicate while preserving order
+    def dedupe(pairs: List[Tuple[int,int]]) -> List[Tuple[int,int]]:
+        seen = set()
+        out = []
+        for a,b in pairs:
+            key = (min(a,b), max(a,b))
+            if key not in seen:
+                seen.add(key)
+                out.append(key)
+        return out
+
+        # If we already have explicit hour groups and user did not mention
+    # slots/blocks/quarters, suppress slot groups entirely.
+    if hours_groups_raw and not re.search(r'\b(slots?|blocks?|quarters?)\b', s):
+        slot_groups_raw = []
+
+
+    return {"hours": dedupe(hours_groups_raw), "slots": dedupe(slot_groups_raw)}
 
 
 def canonicalize(market: str, start: Optional[date], end: Optional[date], gran: str, hours: List[int], slots: List[int], stat: str) -> Optional[QuerySpec]:
@@ -602,25 +708,22 @@ def _primary_metric_label(stat: str) -> str:
 
 
 def _render_selection_card(spec, time_label: str, idx_label: str, count: int) -> str:
+    # count = number of items in the selection.
+    # For hours it's already "hours"; for 15-min slots convert to hours.
     if spec.granularity == "hour":
-        is_full_day = idx_label.strip() in ("1–24", "1-24") or count == 24
-        count_label = "24 hrs" if is_full_day else f"{count} hrs"
-        index_label  = f"blocks {idx_label}"
-        mode_label   = "Hourly"
+        hours_str = f"{count}"
     else:
-        is_full_day = idx_label.strip() in ("1–96", "1-96") or count == 96
-        count_label = "24 hrs" if is_full_day else f"{count}×15min"
-        index_label  = f"slots {idx_label}"
-        mode_label   = "15-min"
+        hrs = count * 15 / 60.0          # 15-min × count  → hours
+        hours_str = f"{hrs:.2f}".rstrip("0").rstrip(".")  # 7, 7.5, 24, etc.
 
     metric_label = _primary_metric_label(spec.stat)
     return (
         "## Summary\n\n"
         "| **Parameter** | **Value** |\n"
-        "|:--|:--|\n"
+        "|----------------|------------|\n"
         f"| **Market** | {spec.market} |\n"
         f"| **Period** | {dmy(spec.start_date)} to {dmy(spec.end_date)} |\n"
-        f"| **Duration** | {time_label} ({count_label}) |\n"
+        f"| **Duration** | {time_label} ({hours_str} hrs) |\n"
     )
 
 
@@ -679,10 +782,23 @@ def rows_to_md_quarter(rows: List[Dict], limit=120) -> str:
 #         lines.append(f"- **{r['exchange']} • {r['commodity']} • {cm.strftime('%b %Y')}** → ₹{float(r['close_price_rs_per_mwh']):.2f}/MWh{tag}")
 #     return "\n".join(lines)
 
+def render_deriv_daily_for_contract_month(end_day: date, rows: List[Dict]) -> str:
+    """Rows must already be filtered so each row's contract_month == end_day's month."""
+    label = end_day.strftime("%b %Y")
+    lines = [f"### ⭐ **Derivative Market — {label} contract (Last close as of {end_day.strftime('%d %b %Y')})**\n"]
+    for r in rows:
+        used = r['used_trading_date']
+        if isinstance(used, datetime):
+            used = used.date()
+        price_kwh = float(r['close_price_rs_per_mwh']) / 1000.0
+        lines.append(f"- **{r['exchange']} • {r['commodity']}** → ₹{price_kwh:.2f}/kWh (on {used.strftime('%d %b %Y')})")
+    return "\n".join(lines)
+
+
 def render_deriv_companion_for_day(requested_day: date, rows: List[Dict]) -> str:
     """Side panel for derivatives when user asked a single day for DAM/GDAM."""
     if not rows:
-        return f"### **Derivative Market (MCX/NSE)** — {requested_day.strftime('%d %b %Y')}\n**\n\nN/A (no derivative data before Jul 2025)."
+        return f"### **Derivative Market (MCX/NSE)** — {requested_day.strftime('%d %b %Y')}\n\nN/A (no derivative data before Jul 2025)."
     
     # Get all unique used trading dates from the results
     used_dates = sorted([
@@ -729,242 +845,196 @@ def highlight_gdam(text: str) -> str:
     )
 
 def render_deriv_expiry(cm_first: date, rows: List[Dict]) -> str:
-    year, month = cm_first.year, cm_first.month
-    from datetime import date as _date
-    import calendar as _cal
-    cm_last = _date(year, month, _cal.monthrange(year, month)[1])
-    label = f"{dmy(cm_first)} to {dmy(cm_last)}"
+    """Show expiry as a single last-close date, not the whole month."""
+    month_label = cm_first.strftime("%b %Y")
     if not rows:
-        return f"### ⭐ **Derivative Market — {label}**\n*Primary Service*\n\n_Expiry not available yet._"
+        return f"### ⭐ **Derivative Market — {month_label} (Expiry Close)**\n\n_Expiry not available yet._"
 
-    lines = [f"### ⭐ **Derivative Market — {label} (Expiry Close)**\n*Primary Service*\n"]
+    # Pick the (max) expiry date present in rows (usually same across exchanges)
+    from datetime import date as _date
+    expiry_dates = []
     for r in rows:
         ed = r["expiry_date"]
         if isinstance(ed, datetime):
             ed = ed.date()
-        lines.append(
-            f"- **{r['exchange']} • {r['commodity']}** → ₹{float(r['expiry_close']):.2f}/MWh (on {dmy(ed)})"
-        )
+        if isinstance(ed, _date):
+            expiry_dates.append(ed)
+    if not expiry_dates:
+        return f"### ⭐ **Derivative Market — {month_label} (Expiry Close)**\n\n_Expiry date not available._"
+
+    last_close_day = max(expiry_dates)
+    lines = [f"### ⭐ **Derivative Market — Expiry Close on {last_close_day.strftime('%d %b %Y')}**\n"]
+    for r in rows:
+        price_kwh = float(r['expiry_close']) / 1000.0
+        lines.append(f"- **{r['exchange']} • {r['commodity']}** → ₹{price_kwh:.2f}/kWh")
     return "\n".join(lines)
+
 
 # ─────────────────────────────────────────────────────────────
 # Main handler
 # ─────────────────────────────────────────────────────────────
+
 @cl.on_message
 async def on_message(msg: cl.Message):
     text_raw = msg.content.strip()
     s_norm = normalize(text_raw)
 
     progress = await progress_start("💭 Interpreting …")
-    await asyncio.sleep(0.15)
+    await asyncio.sleep(0.10)
     await progress_update(progress, "🧮 Querying …")
 
     try:
-            # Parse query  
-        # Parse query
         market = parse_market(s_norm)
         stat = parse_stat(s_norm)
-        
-        # Check for multi-year query FIRST
-        multi_periods = parse_multi_year_months(s_norm)
-        
-        if multi_periods:
-            # Handle multi-period query - render each period separately
-            await progress_hide(progress)
-            
-            all_responses = []
-            
-            for period_start, period_end in multi_periods:
-                if period_start < DATE_MIN_GUARD:
-                    continue
-                
-                try:
-                    # Parse ranges for this period
-                    rng = parse_ranges(s_norm)
-                    spec = canonicalize(market, period_start, period_end,
-                                    rng["granularity"], rng["hours"], rng["quarters"], stat)
-                    
-                    if spec is None:
-                        continue
-                    
-                    # Build content parts for this period
-                    content_parts = []
-                    
-                    # Build header
-                    if spec.granularity == "hour":
-                        tlabel, blabel, n = label_hour_ranges(spec.hours)
-                        selection_card = render_selection_card(spec, tlabel, blabel, n)
-                    else:
-                        tlabel, slabel, n = label_slot_ranges(spec.slots)
-                        selection_card = render_selection_card(spec, tlabel, slabel, n)
-                    
-                    title = f"## Spot Market ({spec.market}) — {dmy(spec.start_date)} to {dmy(spec.end_date)}"
-                    complementary_note = "*Complementary Reference Data*\n\n"
-                    header = f"{title}\n{complementary_note}{selection_card}"
-                    content_parts.append(header)
-                    
-                    # Fetch data
-                    if spec.granularity == "hour":
-                        rows = []
-                        for b1, b2 in compress_ranges(spec.hours):
-                            rows += fetch_hourly(spec.market, spec.start_date, spec.end_date, b1, b2)
-                        
-                        twap_val = twap_kwh(rows, "price_avg_rs_per_mwh", "duration_min")
-                        vwap_val = vwap_kwh(rows, "price_avg_rs_per_mwh", "scheduled_mw_sum", "duration_min")
-                        
-                        primary_label = "Average price (VWAP)" if spec.stat == "vwap" else "Average price"
-                        primary_value = vwap_val if spec.stat == "vwap" else twap_val
-                        content_parts.append(f"**{primary_label}: {money(primary_value)} /kWh**")
-                        
-                    else:  # quarters
-                        rows = []
-                        for s1, s2 in compress_ranges(spec.slots):
-                            rows += fetch_quarter(spec.market, spec.start_date, spec.end_date, s1, s2)
-                        
-                        twap_val = twap_kwh(rows, "price_rs_per_mwh", "duration_min")
-                        vwap_val = vwap_kwh(rows, "price_rs_per_mwh", "scheduled_mw", "duration_min")
-                        
-                        primary_label = "Average price (VWAP)" if spec.stat == "vwap" else "Average price"
-                        primary_value = vwap_val if spec.stat == "vwap" else twap_val
-                        content_parts.append(f"**{primary_label}: {money(primary_value)} /kWh**")
-                    
-                    # Add derivatives for this period
-                    if is_month_intent(s_norm, spec.start_date, spec.end_date):
-                        cm_first = date(spec.start_date.year, spec.start_date.month, 1)
-                        mrows = fetch_deriv_month_expiry(cm_first, None)
-                        content_parts.append("\n" + render_deriv_expiry(cm_first, mrows))
-                    
-                    all_responses.append("\n\n".join(content_parts))
-                    
-                except Exception as e:
-                    print(f"Error processing period {dmy(period_start)}: {e}")
-                    traceback.print_exc()
-                    continue
-            
-            # Send all responses combined
-            if all_responses:
-                final_content = "\n\n---\n\n".join(all_responses) + DISCLAIMER_FOOTER
-                await cl.Message(author=ASSISTANT_AUTHOR, content=final_content).send()
-            else:
-                await cl.Message(author=ASSISTANT_AUTHOR, 
-                            content="Could not process your multi-period query. Please try one period at a time." + DISCLAIMER_FOOTER).send()
-            return  # IMPORTANT: Exit here so we don't continue to single-period logic
-        
-        # If not multi-period, continue with existing single date range logic
-        start, end = parse_date_or_range(s_norm)
-            # ... rest of existing code
 
-        if start and start < DATE_MIN_GUARD:
+        periods = parse_multi_year_months(s_norm)
+        if not periods:
+            start, end = parse_date_or_range(s_norm)
+            if not start or not end:
+                await progress_hide(progress)
+                await cl.Message(
+                    author=ASSISTANT_AUTHOR,
+                    content=("I couldn't infer a date. Try `31/10/2025`, `30 Sep 2025`, `Oct 2025`, `10–15 Aug 2025`, or `yesterday`."),
+                ).send()
+                return
+            periods = [(start, end)]
+
+        # explicit time groups
+        groups = extract_explicit_time_groups(s_norm)
+        explicit_groups = []
+        if groups["hours"]:
+            for sb, eb in groups["hours"]:
+                explicit_groups.append({"granularity": "hour", "hours": list(range(sb, eb + 1)), "slots": None})
+        if groups["slots"]:
+            for s1, s2 in groups["slots"]:
+                explicit_groups.append({"granularity": "quarter", "hours": None, "slots": list(range(s1, s2 + 1))})
+
+        if not explicit_groups:
+            parsed = parse_ranges(s_norm)
+            if parsed["granularity"] == "hour":
+                explicit_groups = [{"granularity": "hour", "hours": parsed["hours"], "slots": None}]
+            else:
+                explicit_groups = [{"granularity": "quarter", "hours": None, "slots": parsed["quarters"]}]
+
+        specs: List[QuerySpec] = []
+        for ps, pe in periods:
+            if ps and ps < DATE_MIN_GUARD:
+                continue
+            for g in explicit_groups:
+                spec = canonicalize(market, ps, pe, g["granularity"], g.get("hours") or [], g.get("slots") or [], stat)
+                if spec:
+                    specs.append(spec)
+                            # De-duplicate identical specs (same period + same hour/slot ranges)
+                    def _spec_key(sp: QuerySpec):
+                        hrs = tuple(_compress_ranges(sp.hours or []))
+                        sls = tuple(_compress_ranges(sp.slots or []))
+                        return (sp.market, sp.start_date, sp.end_date, sp.granularity, hrs, sls, sp.stat, sp.area)
+
+                    uniq, seen = [], set()
+                    for sp in specs:
+                        k = _spec_key(sp)
+                        if k not in seen:
+                            seen.add(k)
+                            uniq.append(sp)
+                    specs = uniq
+
+
+        if not specs:
             await progress_hide(progress)
-            await cl.Message(author=ASSISTANT_AUTHOR, content="Date appears invalid (before 2010). Please try again.").send()
+            await cl.Message(author=ASSISTANT_AUTHOR, content="Couldn't build a query from your input.").send()
             return
 
-        rng = parse_ranges(s_norm)
-        spec = canonicalize(market, start, end, rng["granularity"], rng["hours"], rng["quarters"], stat)
-
-        if spec is None:
-            await progress_hide(progress)
-            await cl.Message(author = ASSISTANT_AUTHOR ,content=(
-                "I couldn't find a valid date or period. Try one of:\n"
-                "- `15/08/2025`\n- `10–15 Aug 2025`\n- `Aug 2025`\n- `this month`, `yesterday`\n\n"
-                "Also include hours or blocks:\n- `08:00–18:00`, `10 to 12 hrs`, or `blocks 5–12`"
-            )).send()
-            return
-
-        # Selection card (pretty header)
-        if spec.granularity == "hour":
-            tlabel, blabel, n = _label_hour_ranges(spec.hours)
-            selection_card = _render_selection_card(spec, tlabel, blabel, n)
-        else:
-            tlabel, slabel, n = _label_slot_ranges(spec.slots)
-            selection_card = _render_selection_card(spec, tlabel, slabel, n)
-
-        title = f"## Spot Market ({spec.market}) — {dmy(spec.start_date)} to {dmy(spec.end_date)}"
-        complementary_note = "\n\n" #Complimentary data
-        header = f"{title}\n{complementary_note}{selection_card}"
-
-
-        # Query & render DAM/GDAM
-        if spec.granularity=="hour":
-            rows: List[Dict] = []
-            for b1,b2 in _compress_ranges(spec.hours):
-                rows += fetch_hourly(spec.market, spec.start_date, spec.end_date, b1, b2)
-
-            twap = twap_kwh(rows, "price_avg_rs_per_mwh", "duration_min")
-            vwap = vwap_kwh(rows, "price_avg_rs_per_mwh", "scheduled_mw_sum", "duration_min")
-            energy_mwh = sum((float(r.get("scheduled_mw_sum") or 0)) * (float(r["duration_min"])/60.0) for r in rows)
-            primary_label = "Average price (VWAP)" if spec.stat=="vwap" else ("Daily average" if spec.stat=="daily_avg" else "Average price")
-            primary_value = vwap if spec.stat == "vwap" else twap
-            kpi = f"**{primary_label}: {money(primary_value)} /kWh**\n\n"
-
-            if spec.stat=="daily_avg":
-                byday: Dict[date, List[Dict]] = {}
-                for r in rows:
-                    dd = r["delivery_date"] if isinstance(r["delivery_date"], date) else datetime.fromisoformat(r["delivery_date"]).date()
-                    byday.setdefault(dd, []).append(r)
-                lines=["| Date | Daily Avg (₹/kWh) |","|---|---:|"]
-                for dd in sorted(byday):
-                    dv = twap_kwh(byday[dd], "price_avg_rs_per_mwh", "duration_min")
-                    lines.append(f"| {dmy(dd)} | {money(dv)} |")
-                body = kpi + "\n\n" + "\n".join(lines)
-            elif spec.stat=="list":
-                body = kpi + "\n\n" + rows_to_md_hour(rows)
+        sections: List[str] = []
+        for spec in specs:
+            # Header
+            if spec.granularity == "hour":
+                tlabel, blabel, n = _label_hour_ranges(spec.hours)
+                selection_card = _render_selection_card(spec, tlabel, blabel, n)
             else:
-                body = kpi
+                tlabel, slabel, n = _label_slot_ranges(spec.slots)
+                selection_card = _render_selection_card(spec, tlabel, slabel, n)
 
-            content_parts = [header, body]
+            title  = f"## Spot Market ({spec.market}) — {dmy(spec.start_date)} to {dmy(spec.end_date)}"
+            header = f"{title}\n\n{selection_card}"
 
-        else:  # quarter path
-            rows: List[Dict] = []
-            for s1,s2 in _compress_ranges(spec.slots):
-                rows += fetch_quarter(spec.market, spec.start_date, spec.end_date, s1, s2)
-
-            twap = twap_kwh(rows, "price_rs_per_mwh", "duration_min")
-            vwap = vwap_kwh(rows, "price_rs_per_mwh", "scheduled_mw", "duration_min")
-            energy_mwh = sum((float(r.get("scheduled_mw") or 0)) * (float(r["duration_min"])/60.0) for r in rows)
-            primary_label = "Average price (VWAP)" if spec.stat=="vwap" else ("Daily average" if spec.stat=="daily_avg" else "Average price")
-            primary_value = vwap if spec.stat == "vwap" else twap
-            kpi = f"**{primary_label}: {money(primary_value)} /kWh**\n\n"
-
-            if spec.stat=="daily_avg":
-                byday: Dict[date, List[Dict]] = {}
-                for r in rows:
-                    dd = r["delivery_date"] if isinstance(r["delivery_date"], date) else datetime.fromisoformat(r["delivery_date"]).date()
-                    byday.setdefault(dd, []).append(r)
-                lines=["| Date | Daily Avg (₹/kWh) |","|---|---:|"]
-                for dd in sorted(byday):
-                    dv = twap_kwh(byday[dd], "price_rs_per_mwh", "duration_min")
-                    lines.append(f"| {dmy(dd)} | {money(dv)} |")
-                body = kpi + "\n\n" + "\n".join(lines)
-            elif spec.stat=="list":
-                body = kpi + "\n\n" + rows_to_md_quarter(rows)
+            # Data & fallback
+            kpi, body = "", ""
+            if spec.granularity == "hour":
+                rows: List[Dict] = []
+                for b1, b2 in _compress_ranges(spec.hours):
+                    rows += fetch_hourly(spec.market, spec.start_date, spec.end_date, b1, b2)
+                if rows:
+                    twap = twap_kwh(rows, "price_avg_rs_per_mwh", "duration_min")
+                    vwap = vwap_kwh(rows, "price_avg_rs_per_mwh", "scheduled_mw_sum", "duration_min")
+                    primary_label = _primary_metric_label(spec.stat)
+                    primary_value = vwap if spec.stat == "vwap" else twap
+                    kpi  = f"**{primary_label}: {money(primary_value)} /kWh**\n\n"
+                    body = rows_to_md_hour(rows) if spec.stat == "list" else ""
+                else:
+                    qrows: List[Dict] = []
+                    for s1, s2 in _hour_blocks_to_slot_ranges(_compress_ranges(spec.hours)):
+                        qrows += fetch_quarter(spec.market, spec.start_date, spec.end_date, s1, s2)
+                    twap = twap_kwh(qrows, "price_rs_per_mwh", "duration_min")
+                    vwap = vwap_kwh(qrows, "price_rs_per_mwh", "scheduled_mw", "duration_min")
+                    primary_label = _primary_metric_label(spec.stat) + "*"
+                    primary_value = vwap if spec.stat == "vwap" else twap
+                    kpi  = f"**{primary_label}: {money(primary_value)} /kWh**  \n_Fallback via 15-min slots_\n\n"
+                    body = rows_to_md_quarter(qrows) if spec.stat == "list" else ""
             else:
-                body = kpi
+                qrows: List[Dict] = []
+                for s1, s2 in _compress_ranges(spec.slots):
+                    qrows += fetch_quarter(spec.market, spec.start_date, spec.end_date, s1, s2)
+                twap = twap_kwh(qrows, "price_rs_per_mwh", "duration_min")
+                vwap = vwap_kwh(qrows, "price_rs_per_mwh", "scheduled_mw", "duration_min")
+                primary_label = _primary_metric_label(spec.stat)
+                primary_value = vwap if spec.stat == "vwap" else twap
+                kpi  = f"**{primary_label}: {money(primary_value)} /kWh**\n\n"
+                body = rows_to_md_quarter(qrows) if spec.stat == "list" else ""
 
-            content_parts = [header, body]
+            deriv_block = ""
 
-        # ── Derivative companion beside DAM/GDAM ─────────────────────
-        if spec.start_date == spec.end_date:
-            # Single date: daily close with fallback (NA if before Jul 2025)...
-            drows = fetch_deriv_daily_fallback(spec.start_date, None)
-            content_parts.append("\n" + render_deriv_companion_for_day(spec.start_date, drows))
-        elif is_month_intent(s_norm, spec.start_date, spec.end_date):
-            # Month intent: expiry close
-            cm_first = date(spec.start_date.year, spec.start_date.month, 1)
-            mrows = fetch_deriv_month_expiry(cm_first, None)
-            content_parts.append("\n" + render_deriv_expiry(cm_first, mrows))
-        else:
-            # Date range: Show derivatives for the END date of the range
-            drows = fetch_deriv_daily_fallback(spec.end_date, None)
-            if drows:
-                content_parts.append("\n" + render_deriv_companion_for_day(spec.end_date, drows))
+            if spec.start_date == spec.end_date:
+                # Single day → last close as of that day (per exchange), DB handles fallback.
+                drows = fetch_deriv_daily_fallback(spec.end_date, None)
+                if drows:
+                    deriv_block = "\n" + render_deriv_companion_for_day(spec.end_date, drows)
 
+            elif _same_calendar_month(spec.start_date, spec.end_date) or is_month_intent(s_norm, spec.start_date, spec.end_date):
+                # Range fully inside one month:
+                # 1) Try daily close for the SAME contract month up to the end date.
+                drows = fetch_deriv_daily_fallback(spec.end_date, None)
+
+                filtered = []
+                seen_ex = set()
+                for r in drows:
+                    if _is_same_contract_month(spec.end_date, r['contract_month']):
+                        ex = r['exchange']
+                        if ex not in seen_ex:
+                            seen_ex.add(ex)
+                            filtered.append(r)
+
+                if filtered:
+                    deriv_block = "\n" + render_deriv_daily_for_contract_month(spec.end_date, filtered)
+                else:
+                    # 2) If no daily rows for that contract month → show that month’s EXPIRY,
+                    #    but as a single date (not 01–31) via the renderer above.
+                    cm_first = date(spec.end_date.year, spec.end_date.month, 1)
+                    mrows = fetch_deriv_month_expiry(cm_first, None)
+                    deriv_block = "\n" + render_deriv_expiry(cm_first, mrows)
+
+            else:
+                # Cross-month ranges → last close as of end date (per exchange).
+                drows = fetch_deriv_daily_fallback(spec.end_date, None)
+                if drows:
+                    deriv_block = "\n" + render_deriv_companion_for_day(spec.end_date, drows)
+
+
+            sections.append(header + "\n" + kpi + body + deriv_block)
 
         await progress_hide(progress)
-        final_content = "\n\n".join(content_parts)
-        final_content = highlight_gdam(final_content)
-        await cl.Message(author=ASSISTANT_AUTHOR, content=final_content).send()
-
+        final = "\n\n---\n\n".join(sections)
+        final = highlight_gdam(final)
+        await cl.Message(author=ASSISTANT_AUTHOR, content=final).send()
 
     except Exception:
         traceback.print_exc()
