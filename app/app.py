@@ -39,7 +39,7 @@ DATE_MIN_GUARD = date(2010, 1, 1)
 
 
 def _connect():
-    keepalive = dict(connect_timeout=10, keepalives=1, keepalives_idle=30, keepalives_interval=10, keepalives_count=5)
+    keepalive = dict(connect_timeout=10, keepalives=1, keepalives_idle=30, keepalives_interval=10, keepalives_count=5)
     
     if DB_URL:
         # FIX: Do not add sslmode=DB_SSLMODE here.
