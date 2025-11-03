@@ -39,13 +39,18 @@ DATE_MIN_GUARD = date(2010, 1, 1)
 
 
 def _connect():
-    keepalive = dict(connect_timeout=10, keepalives=1, keepalives_idle=30, keepalives_interval=10, keepalives_count=5)
+    keepalive = dict(connect_timeout=10, keepalives=1, keepalives_idle=30, keepalives_interval=10, keepalives_count=5)
+    
     if DB_URL:
-        return psycopg2.connect(DB_URL, sslmode=DB_SSLMODE, **keepalive)
-    return psycopg2.connect(
-        host=DB_HOST, port=DB_PORT, dbname=DB_NAME,
-        user=DB_USER, password=DB_PASSWORD, sslmode=DB_SSLMODE, **keepalive
-    )
+        # FIX: Do not add sslmode=DB_SSLMODE here.
+        # Railway's DATABASE_URL already has the correct SSL settings.
+        return psycopg2.connect(DB_URL, **keepalive)
+
+    # This fallback path is fine as-is for connecting to an external DB
+    return psycopg2.connect(
+        host=DB_HOST, port=DB_PORT, dbname=DB_NAME,
+        user=DB_USER, password=DB_PASSWORD, sslmode=DB_SSLMODE, **keepalive
+    )
 # Disclaimer footer for derivative market focus
 DISCLAIMER_FOOTER = """
 
