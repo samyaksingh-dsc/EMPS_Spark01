@@ -1,0 +1,194 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>EM Spark - Loading...</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Segoe UI', Arial, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            height: 100vh;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            overflow: hidden;
+        }
+
+        .loader-container {
+            text-align: center;
+            animation: fadeIn 0.5s ease-in;
+        }
+
+        /* Logo container */
+        .logo-wrapper {
+            position: relative;
+            width: 200px;
+            height: 200px;
+            margin: 0 auto 30px;
+        }
+
+        /* Company Logo in center */
+        .company-logo {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            width: 120px;
+            height: 120px;
+            background: white;
+            border-radius: 50%;
+            padding: 20px;
+            box-shadow: 0 10px 40px rgba(0, 0, 0, 0.2);
+            z-index: 2;
+            animation: pulse 2s ease-in-out infinite;
+        }
+
+        .company-logo img {
+            width: 100%;
+            height: 100%;
+            object-fit: contain;
+        }
+
+        /* Rotating circle around logo */
+        .spinner-circle {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 200px;
+            height: 200px;
+            border: 4px solid rgba(255, 255, 255, 0.2);
+            border-top: 4px solid #ffffff;
+            border-radius: 50%;
+            animation: rotate 1.5s linear infinite;
+            z-index: 1;
+        }
+
+        /* Secondary rotating circle for enhanced effect */
+        .spinner-circle-secondary {
+            position: absolute;
+            top: 10px;
+            left: 10px;
+            width: 180px;
+            height: 180px;
+            border: 3px solid transparent;
+            border-bottom: 3px solid rgba(255, 255, 255, 0.5);
+            border-radius: 50%;
+            animation: rotate 2s linear infinite reverse;
+            z-index: 1;
+        }
+
+        /* Loading text */
+        .loading-text {
+            color: white;
+            font-size: 24px;
+            font-weight: 600;
+            margin-top: 20px;
+            animation: fadeInOut 2s ease-in-out infinite;
+        }
+
+        .loading-subtext {
+            color: rgba(255, 255, 255, 0.8);
+            font-size: 14px;
+            margin-top: 10px;
+            font-weight: 300;
+        }
+
+        /* Animations */
+        @keyframes rotate {
+            0% {
+                transform: rotate(0deg);
+            }
+            100% {
+                transform: rotate(360deg);
+            }
+        }
+
+        @keyframes pulse {
+            0%, 100% {
+                transform: translate(-50%, -50%) scale(1);
+            }
+            50% {
+                transform: translate(-50%, -50%) scale(1.05);
+            }
+        }
+
+        @keyframes fadeIn {
+            from {
+                opacity: 0;
+                transform: translateY(-20px);
+            }
+            to {
+                opacity: 1;
+                transform: translateY(0);
+            }
+        }
+
+        @keyframes fadeInOut {
+            0%, 100% {
+                opacity: 0.6;
+            }
+            50% {
+                opacity: 1;
+            }
+        }
+
+        /* Fade out animation when content loads */
+        .fade-out {
+            animation: fadeOut 0.5s ease-out forwards;
+        }
+
+        @keyframes fadeOut {
+            to {
+                opacity: 0;
+                visibility: hidden;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="loader-container" id="loader">
+        <div class="logo-wrapper">
+            <!-- Company logo - replace src with your actual logo path -->
+            <div class="company-logo">
+                <img src="/public/logo_light.png" alt="Energyminds Logo" id="logoImage">
+            </div>
+            
+            <!-- Rotating circles -->
+            <div class="spinner-circle"></div>
+            <div class="spinner-circle-secondary"></div>
+        </div>
+        
+        <div class="loading-text">Loading EM Spark</div>
+        <div class="loading-subtext">Energyminds Power Solutions - Smart Power Analytics & Response Knowledge</div>
+    </div>
+
+    <script>
+        // Simulate loading - Replace this with actual app initialization check
+        window.addEventListener('load', function() {
+            // Minimum loading time of 2 seconds for smooth UX
+            setTimeout(function() {
+                // Fade out loader
+                document.getElementById('loader').classList.add('fade-out');
+                
+                // Redirect to main Chainlit app after fade completes
+                setTimeout(function() {
+                    // This will load your actual Chainlit application
+                    window.location.href = '/chat'; // Or your actual Chainlit route
+                }, 500);
+            }, 2000);
+        });
+
+        // Theme detection - switch logo based on system preference
+        if (window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches) {
+            document.getElementById('logoImage').src = '/public/logo_dark.png';
+        }
+    </script>
+</body>
+</html>

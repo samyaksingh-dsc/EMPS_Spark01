@@ -1,0 +1,261 @@
+/* ===================================
+   ENERGYMINDS BRAND THEME FOR EM SPARK
+   =================================== */
+
+/* === GLOBAL VARIABLES === */
+:root {
+    /* Energyminds Brand Colors */
+    --em-blue-primary: #1E88E5;
+    --em-blue-dark: #0D47A1;
+    --em-blue-light: #42A5F5;
+    --em-green-accent: #4CAF50;
+    --em-text-dark: #212121;
+    --em-text-gray: #757575;
+    --em-bg-light: #F5F5F5;
+    
+    /* Spacing */
+    --em-spacing-sm: 8px;
+    --em-spacing-md: 16px;
+    --em-spacing-lg: 24px;
+    
+    /* Border Radius */
+    --em-radius: 8px;
+    
+    /* Shadows */
+    --em-shadow-sm: 0 2px 4px rgba(0,0,0,0.1);
+    --em-shadow-md: 0 4px 8px rgba(0,0,0,0.15);
+    --em-shadow-lg: 0 8px 16px rgba(0,0,0,0.2);
+}
+
+/* === HEADER CUSTOMIZATION === */
+header {
+    background: linear-gradient(135deg, var(--em-blue-primary) 0%, var(--em-blue-dark) 100%) !important;
+    box-shadow: var(--em-shadow-md) !important;
+}
+
+/* GDAM Green Highlighting */
+.gdam-highlight {
+    color: #10b981 !important;
+    font-weight: 600;
+}
+
+/* Alternative: GDAM with badge style */
+.gdam-badge {
+    color: #10b981;
+    font-weight: 600;
+    background: rgba(16, 185, 129, 0.1);
+    padding: 2px 6px;
+    border-radius: 4px;
+    border: 1px solid rgba(16, 185, 129, 0.3);
+}
+
+/* For markdown content - style GDAM text directly */
+.message-content strong:has-text("GDAM"),
+.message-content:contains("GDAM") {
+    color: #10b981;
+}
+
+
+/* Logo area in header */
+.app-header .logo {
+    font-weight: 700;
+    font-size: 1.5rem;
+    color: #FFFFFF !important;
+}
+
+/* === MESSAGE BUBBLES === */
+/* User messages */
+.message.user {
+    background-color: var(--em-blue-primary) !important;
+    color: white !important;
+    border-radius: var(--em-radius) !important;
+    box-shadow: var(--em-shadow-sm) !important;
+}
+
+/* Assistant messages */
+.message.assistant {
+    background-color: white !important;
+    border: 1px solid #E0E0E0 !important;
+    border-radius: var(--em-radius) !important;
+    box-shadow: var(--em-shadow-sm) !important;
+}
+
+/* === BUTTONS === */
+button.primary, .MuiButton-containedPrimary {
+    background: linear-gradient(135deg, var(--em-blue-primary) 0%, var(--em-blue-dark) 100%) !important;
+    color: white !important;
+    border-radius: var(--em-radius) !important;
+    font-weight: 600 !important;
+    text-transform: none !important;
+    box-shadow: var(--em-shadow-sm) !important;
+    transition: all 0.3s ease !important;
+}
+
+button.primary:hover, .MuiButton-containedPrimary:hover {
+    box-shadow: var(--em-shadow-md) !important;
+    transform: translateY(-2px);
+}
+
+/* Secondary buttons */
+button.secondary, .MuiButton-outlined {
+    border: 2px solid var(--em-blue-primary) !important;
+    color: var(--em-blue-primary) !important;
+    border-radius: var(--em-radius) !important;
+    font-weight: 600 !important;
+    text-transform: none !important;
+}
+
+/* === INPUT FIELD === */
+.input-container, .MuiTextField-root {
+    border-radius: var(--em-radius) !important;
+}
+
+.input-container input,
+.MuiOutlinedInput-root {
+    border-radius: var(--em-radius) !important;
+    border-color: var(--em-blue-light) !important;
+}
+
+.input-container input:focus,
+.MuiOutlinedInput-root.Mui-focused .MuiOutlinedInput-notchedOutline {
+    border-color: var(--em-blue-primary) !important;
+    box-shadow: 0 0 0 3px rgba(30, 136, 229, 0.1) !important;
+}
+
+/* === SIDEBAR === */
+.sidebar {
+    background-color: #FAFAFA !important;
+    border-right: 1px solid #E0E0E0 !important;
+}
+
+/* === LINKS === */
+a {
+    color: var(--em-blue-primary) !important;
+    text-decoration: none !important;
+    font-weight: 500 !important;
+    transition: color 0.3s ease !important;
+}
+
+a:hover {
+    color: var(--em-blue-dark) !important;
+    text-decoration: underline !important;
+}
+
+/* === SCROLLBAR === */
+::-webkit-scrollbar {
+    width: 8px;
+}
+
+::-webkit-scrollbar-track {
+    background: #F5F5F5;
+}
+
+::-webkit-scrollbar-thumb {
+    background: var(--em-blue-light);
+    border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+    background: var(--em-blue-primary);
+}
+
+/* === LOADING INDICATORS === */
+.loading-spinner {
+    border-top-color: var(--em-blue-primary) !important;
+}
+
+/* === TAGS/CHIPS === */
+.tag, .MuiChip-root {
+    background-color: var(--em-blue-light) !important;
+    color: white !important;
+    border-radius: 16px !important;
+    font-weight: 500 !important;
+}
+
+/* === CARDS === */
+.card, .MuiCard-root {
+    border-radius: var(--em-radius) !important;
+    box-shadow: var(--em-shadow-sm) !important;
+    border: 1px solid #E0E0E0 !important;
+    transition: all 0.3s ease !important;
+}
+
+.card:hover, .MuiCard-root:hover {
+    box-shadow: var(--em-shadow-md) !important;
+    transform: translateY(-4px);
+}
+
+/* === WELCOME SCREEN === */
+.readme-container {
+    background: linear-gradient(135deg, rgba(30, 136, 229, 0.05) 0%, rgba(76, 175, 80, 0.05) 100%);
+    border-radius: var(--em-radius);
+    padding: var(--em-spacing-lg);
+}
+
+/* === TOOLTIPS === */
+.MuiTooltip-tooltip {
+    background-color: var(--em-text-dark) !important;
+    font-size: 0.875rem !important;
+}
+
+/* === CODE BLOCKS === */
+pre {
+    background-color: #F5F5F5 !important;
+    border: 1px solid #E0E0E0 !important;
+    border-radius: var(--em-radius) !important;
+    padding: var(--em-spacing-md) !important;
+}
+
+code {
+    color: var(--em-blue-dark) !important;
+    font-family: 'Monaco', 'Courier New', monospace !important;
+}
+
+/* === RESPONSIVE DESIGN === */
+@media (max-width: 768px) {
+    header {
+        padding: var(--em-spacing-sm) !important;
+    }
+    
+    .message {
+        font-size: 0.9rem !important;
+    }
+}
+
+/* === ACCESSIBILITY === */
+button:focus,
+input:focus,
+a:focus {
+    outline: 2px solid var(--em-blue-primary) !important;
+    outline-offset: 2px !important;
+}
+
+/* === ANIMATIONS === */
+@keyframes fadeIn {
+    from {
+        opacity: 0;
+        transform: translateY(10px);
+    }
+    to {
+        opacity: 1;
+        transform: translateY(0);
+    }
+}
+
+.message {
+    animation: fadeIn 0.3s ease-out;
+}
+
+/* === BRANDING FOOTER (OPTIONAL) === */
+.app-footer {
+    background: linear-gradient(135deg, var(--em-blue-dark) 0%, var(--em-blue-primary) 100%);
+    color: white;
+    text-align: center;
+    padding: var(--em-spacing-md);
+    font-size: 0.875rem;
+}
+
+.app-footer a {
+    color: white !important;
+    font-weight: 600 !important;
+}
