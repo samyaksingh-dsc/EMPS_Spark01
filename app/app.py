@@ -2,11 +2,14 @@ import os, re, calendar, asyncio, traceback
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta
 from typing import List, Tuple, Optional, Dict
+import uuid, json
 
 import chainlit as cl
 import psycopg2
 import psycopg2.extras
 from dotenv import load_dotenv
+
+ANALYTICS_ACTIVE_WINDOW_SEC = int(os.getenv("ANALYTICS_ACTIVE_WINDOW_SEC", "120"))
 
 # ─────────────────────────────────────────────────────────────
 # Branding: custom avatar (logo)
@@ -869,6 +872,55 @@ def render_deriv_expiry(cm_first: date, rows: List[Dict]) -> str:
         lines.append(f"- **{r['exchange']} • {r['commodity']}** → ₹{price_kwh:.2f}/kWh")
     return "\n".join(lines)
 
+def _exec(sql, params=None, fetch="none"):
+    with _connect() as conn, conn.cursor() as cur:
+        cur.execute(sql, params or ())
+        if fetch == "one":
+            r = cur.fetchone(); return r[0] if r else None
+        if fetch == "all":
+            return cur.fetchall()
+        return None
+
+def analytics_start_session(session_id: str, user_agent=None, referer=None, ip=None):
+    _exec("""
+      insert into analytics_usage_sessions (id, user_agent, referer, ip)
+      values (%s, %s, %s, %s)
+      on conflict (id) do update set last_seen = now()
+    """, (session_id, user_agent, referer, ip))
+
+def analytics_touch_session(session_id: str):
+    _exec("update analytics_usage_sessions set last_seen = now() where id = %s", (session_id,))
+
+def analytics_end_session(session_id: str):
+    _exec("update analytics_usage_sessions set ended_at = now(), last_seen = now() where id = %s", (session_id,))
+
+def analytics_log_event(session_id: str, etype: str, payload: dict):
+    _exec("insert into analytics_usage_events (session_id, type, payload) values (%s, %s, %s)",
+          (session_id, etype, json.dumps(payload)))
+
+def analytics_counts():
+    active = _exec(
+        "select count(*) from analytics_usage_sessions "
+        "where last_seen > now() - make_interval(secs := %s)",
+        (ANALYTICS_ACTIVE_WINDOW_SEC,), fetch="one"
+    ) or 0
+    today_sessions = _exec(
+        "select count(*) from analytics_usage_sessions where started_at::date = current_date", fetch="one"
+    ) or 0
+    total_sessions = _exec("select count(*) from analytics_usage_sessions", fetch="one") or 0
+    msgs_today = _exec(
+        "select count(*) from analytics_usage_events where type='message' and ts::date = current_date", fetch="one"
+    ) or 0
+    return dict(active_now=active, today_sessions=today_sessions, total_sessions=total_sessions, messages_today=msgs_today)
+
+
+@cl.on_chat_start
+async def _start():
+    import uuid
+    sid = str(uuid.uuid4())
+    cl.user_session.set("sid", sid)
+    analytics_start_session(sid)
+
 
 # ─────────────────────────────────────────────────────────────
 # Main handler
@@ -877,6 +929,25 @@ def render_deriv_expiry(cm_first: date, rows: List[Dict]) -> str:
 @cl.on_message
 async def on_message(msg: cl.Message):
     text_raw = msg.content.strip()
+    sid = cl.user_session.get("sid")
+    if sid:
+        analytics_touch_session(sid)
+        analytics_log_event(sid, "message", {"len": len(text_raw), "text_preview": text_raw[:120]})
+
+    # quick stats command
+    if text_raw.lower() in ("/stats", "stats"):
+        c = analytics_counts()
+        await cl.Message(
+            author=ASSISTANT_AUTHOR,
+            content=(
+                "## Service usage\n"
+                f"- **Active now** (last {ANALYTICS_ACTIVE_WINDOW_SEC}s): **{c['active_now']}**\n"
+                f"- **Today’s sessions**: **{c['today_sessions']}**\n"
+                f"- **Messages today**: **{c['messages_today']}**\n"
+                f"- **Total sessions (all-time)**: **{c['total_sessions']}**"
+            ),
+        ).send()
+        return
     s_norm = normalize(text_raw)
 
     progress = await progress_start("💭 Interpreting …")
