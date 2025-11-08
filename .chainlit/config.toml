@@ -59,7 +59,7 @@ name = "EM Spark"
 description = "AI-powered energy trading assistant"
 default_theme = "light"
 #cot = "hidden"
-favicon = "/public/favicon.png"  # Change to your favicon path
+favicon = "/public/favicon.ico"  # Change to your favicon path
 
 show_readme_as_default = false
 default_collapse_content = true
